@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 from app.agent import ask
 from ingestion.ingest import load_pdfs
+from ingestion.tabular_store import tabular_store
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from vectorstore.store import build_index
 
@@ -102,11 +103,16 @@ def health():
 @app.post("/ingest")
 async def ingest(file: UploadFile = File(...)):
     """
-    Upload a PDF and add it to the vector index.
-    Existing index is rebuilt to include the new document.
+    Upload a document (PDF or CSV).
+    - PDFs are chunked and added to the hybrid FAISS+BM25 vector index.
+    - CSVs are loaded into the structured tabular store for safe pandas analysis.
     """
-    if not file.filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    fname = file.filename.lower()
+    if fname.endswith(".csv"):
+        return await ingest_csv(file)
+
+    if not fname.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF and CSV files are supported.")
 
     dest = DATA_DIR / file.filename
     content = await file.read()
@@ -121,8 +127,48 @@ async def ingest(file: UploadFile = File(...)):
 
     return {
         "status":    "indexed",
+        "type":      "pdf",
         "filename":  file.filename,
         "chunks":    len(chunks),
+    }
+
+
+@app.post("/ingest/csv")
+async def ingest_csv(file: UploadFile = File(...)):
+    """
+    Upload and load a CSV dataset for structured tabular analysis.
+    Preserves data types and enables safe pandas querying without arbitrary code execution.
+    """
+    if not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV (.csv) files are supported for tabular ingestion.")
+
+    content = await file.read()
+    try:
+        summary = tabular_store.load_csv(content, file.filename)
+    except Exception as e:
+        logger.error(f"Failed to ingest CSV: {e}")
+        raise HTTPException(status_code=400, detail=f"CSV ingestion failed: {e}")
+
+    return {
+        "status":    "indexed",
+        "type":      "csv",
+        "filename":  summary["filename"],
+        "rows":      summary["row_count"],
+        "columns":   summary["columns"],
+    }
+
+
+@app.get("/csv/schema")
+def get_csv_schema():
+    """Return active tabular dataset schema and metadata."""
+    if not tabular_store.has_data():
+        return {"loaded": False, "detail": "No CSV dataset is currently loaded."}
+    return {
+        "loaded": True,
+        "filename": tabular_store.active_filename,
+        "rows": len(tabular_store.active_df),
+        "columns": list(tabular_store.active_df.columns),
+        "dtypes": {col: str(dtype) for col, dtype in tabular_store.active_df.dtypes.items()},
     }
 
 

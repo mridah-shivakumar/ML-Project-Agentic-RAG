@@ -98,7 +98,6 @@ mock_store = MagicMock()
 sys.modules["vectorstore"] = MagicMock()
 sys.modules["vectorstore.store"] = mock_store
 mock_ingest = MagicMock()
-sys.modules["ingestion"] = MagicMock()
 sys.modules["ingestion.ingest"] = mock_ingest
 
 from app.api import parse_history, QueryRequest

@@ -25,18 +25,41 @@ st.caption("Hybrid retrieval · Cross-encoder reranking · Corrective RAG · Web
 
 # ── Sidebar — upload ──────────────────────────────────────────────────────────
 with st.sidebar:
-    st.header("Upload Documents")
-    uploaded = st.file_uploader("Choose a PDF", type="pdf")
-    if uploaded and st.button("Index Document"):
-        with st.spinner("Ingesting and indexing …"):
+    st.header("Knowledge Sources")
+
+    # Document Corpus (PDF)
+    st.subheader("📄 Document Corpus (PDF)")
+    uploaded_pdf = st.file_uploader("Choose a PDF", type="pdf")
+    if uploaded_pdf and st.button("Index PDF Document"):
+        with st.spinner("Ingesting and indexing PDF …"):
             resp = httpx.post(
                 f"{API_BASE}/ingest",
-                files={"file": (uploaded.name, uploaded.getvalue(), "application/pdf")},
+                files={"file": (uploaded_pdf.name, uploaded_pdf.getvalue(), "application/pdf")},
                 timeout=120,
             )
         if resp.status_code == 200:
             data = resp.json()
-            st.success(f"Indexed {data['chunks']} chunks from {data['filename']}")
+            st.success(f"Indexed {data.get('chunks', 0)} chunks from {data['filename']}")
+        else:
+            st.error(f"Error: {resp.text}")
+
+    st.divider()
+
+    # Structured Tabular Data (CSV)
+    st.subheader("📊 Structured Data (CSV)")
+    uploaded_csv = st.file_uploader("Choose a CSV", type="csv")
+    if uploaded_csv and st.button("Load CSV Dataset"):
+        with st.spinner("Loading and validating CSV …"):
+            resp = httpx.post(
+                f"{API_BASE}/ingest/csv",
+                files={"file": (uploaded_csv.name, uploaded_csv.getvalue(), "text/csv")},
+                timeout=30,
+            )
+        if resp.status_code == 200:
+            data = resp.json()
+            st.success(f"Loaded {data['filename']} ({data['rows']} rows, {len(data['columns'])} cols)")
+            with st.expander("📋 Columns"):
+                st.write(", ".join(data['columns']))
         else:
             st.error(f"Error: {resp.text}")
 
@@ -61,7 +84,10 @@ for msg in st.session_state.messages:
         if msg.get("sources"):
             with st.expander("📚 Sources"):
                 for s in msg["sources"]:
-                    st.markdown(f"- **{s['source']}** — Page {s['page']}")
+                    if str(s.get("source", "")).endswith(".csv"):
+                        st.markdown(f"- 📊 **[CSV Data] {s['source']}** — {s.get('text', '')}")
+                    else:
+                        st.markdown(f"- 📄 **[PDF Document] {s['source']}** — Page {s.get('page', 0)}")
         if msg.get("meta"):
             m = msg["meta"]
             cols = st.columns(3)
@@ -96,7 +122,10 @@ if prompt := st.chat_input("Ask a question about your documents …"):
                     if data["sources"]:
                         with st.expander("📚 Sources"):
                             for s in data["sources"]:
-                                st.markdown(f"- **{s['source']}** — Page {s['page']}")
+                                if str(s.get("source", "")).endswith(".csv"):
+                                    st.markdown(f"- 📊 **[CSV Data] {s['source']}** — {s.get('text', '')}")
+                                else:
+                                    st.markdown(f"- 📄 **[PDF Document] {s['source']}** — Page {s.get('page', 0)}")
 
                     cols = st.columns(3)
                     cols[0].metric("Latency",   f"{data['latency_ms']} ms")
