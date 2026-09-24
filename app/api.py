@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -66,8 +66,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATA_DIR    = Path("data")
+DATA_DIR     = Path("data")
 METRICS_FILE = Path("evaluation/latest_scores.json")
+RESULTS_FILE = Path("evaluation/results.json")
 DATA_DIR.mkdir(exist_ok=True)
 
 
@@ -90,6 +91,7 @@ class QueryResponse(BaseModel):
     rewrite_count: int
     used_web:      bool
     latency_ms:    int
+    trace:         Optional[Dict[str, Any]] = None
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
@@ -205,12 +207,26 @@ def query(req: QueryRequest):
         rewrite_count = result["rewrite_count"],
         used_web      = result["used_web"],
         latency_ms    = latency,
+        trace         = result.get("trace"),
     )
 
 
 @app.get("/metrics")
 def metrics():
-    """Return latest RAGAs evaluation scores if available."""
+    """Return latest evaluation scores if available."""
+    if METRICS_FILE.exists():
+        return json.loads(METRICS_FILE.read_text())
+    if RESULTS_FILE.exists():
+        data = json.loads(RESULTS_FILE.read_text())
+        return data.get("aggregate", data)
+    return {"detail": "No evaluation scores yet. Run: python -m evaluation.evaluate"}
+
+
+@app.get("/evaluation/results")
+def evaluation_results():
+    """Return complete evaluation report and per-question telemetry if available."""
+    if RESULTS_FILE.exists():
+        return json.loads(RESULTS_FILE.read_text())
     if METRICS_FILE.exists():
         return json.loads(METRICS_FILE.read_text())
     return {"detail": "No evaluation scores yet. Run: python -m evaluation.evaluate"}

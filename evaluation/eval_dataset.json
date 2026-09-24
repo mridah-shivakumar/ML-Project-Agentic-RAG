@@ -1,0 +1,169 @@
+[
+  {
+    "id": "doc_1",
+    "category": "doc_direct",
+    "question": "What is the policy on maximum data retention for inactive accounts?",
+    "expected_route": "documents",
+    "ground_truth": "Inactive accounts and their associated logs are retained for a maximum of 90 days before permanent deletion.",
+    "expected_source": "data_retention_policy.pdf",
+    "csv_expectations": null,
+    "conversation_history": null,
+    "synthetic_context": "Section 4.2 Data Retention Policy: Inactive accounts and their associated logs are retained for a maximum of 90 days before permanent deletion."
+  },
+  {
+    "id": "doc_2",
+    "category": "doc_reasoning",
+    "question": "Can an employee access production databases directly without multi-factor authentication?",
+    "expected_route": "documents",
+    "ground_truth": "No, multi-factor authentication and a secure bastion host are strictly mandatory for all production database access.",
+    "expected_source": "security_guidelines.pdf",
+    "csv_expectations": null,
+    "conversation_history": null,
+    "synthetic_context": "Section 2.1 Access Control: Direct access to production databases without multi-factor authentication is strictly forbidden under all circumstances."
+  },
+  {
+    "id": "doc_3",
+    "category": "doc_multi_context",
+    "question": "What are the combined requirements for deploying to staging and production environments?",
+    "expected_route": "documents",
+    "ground_truth": "Staging deployment requires passing CI unit tests and code review. Production deployment additionally requires automated security scanning and VP approval.",
+    "expected_source": "deployment_playbook.pdf",
+    "csv_expectations": null,
+    "conversation_history": null,
+    "synthetic_context": "Chapter 3: Staging requires unit test passes and peer code review. Chapter 4: Production deployments require staging verification, automated security scans, and VP sign-off."
+  },
+  {
+    "id": "doc_4",
+    "category": "doc_rewrite",
+    "question": "how long keep old files?",
+    "expected_route": "documents",
+    "ground_truth": "Archived files must be kept for 7 years according to regulatory compliance rules.",
+    "expected_source": "compliance_manual.pdf",
+    "csv_expectations": null,
+    "conversation_history": null,
+    "synthetic_context": "Compliance Section: All financial and system records must be kept for a minimum retention window of 7 years."
+  },
+  {
+    "id": "doc_5",
+    "category": "web_fallback",
+    "question": "What were the latest findings announced yesterday regarding the James Webb Space Telescope exoplanet survey?",
+    "expected_route": "documents",
+    "ground_truth": "Recent JWST observations detected carbon-bearing molecules in the atmosphere of habitable-zone exoplanet K2-18b.",
+    "expected_source": "web_search",
+    "csv_expectations": null,
+    "conversation_history": null,
+    "synthetic_context": null
+  },
+  {
+    "id": "csv_1",
+    "category": "csv_highest",
+    "question": "Which space mission had the highest budget?",
+    "expected_route": "csv_data",
+    "ground_truth": "Artemis 1 had the highest budget at 4100 million USD.",
+    "expected_source": "space_missions.csv",
+    "csv_expectations": {
+      "operation": "highest",
+      "target_column": "cost",
+      "group_column": null,
+      "agg_func": null,
+      "filter": null,
+      "expected_value": 4100.0,
+      "expected_entity": "Artemis 1"
+    },
+    "conversation_history": null,
+    "synthetic_context": null
+  },
+  {
+    "id": "csv_2",
+    "category": "csv_aggregate",
+    "question": "What is the total cost of all space missions?",
+    "expected_route": "csv_data",
+    "ground_truth": "The total budget of all missions combined is 11175 million USD.",
+    "expected_source": "space_missions.csv",
+    "csv_expectations": {
+      "operation": "aggregate",
+      "target_column": "cost",
+      "group_column": null,
+      "agg_func": "sum",
+      "filter": null,
+      "expected_value": 11175.0,
+      "expected_entity": null
+    },
+    "conversation_history": null,
+    "synthetic_context": null
+  },
+  {
+    "id": "csv_3",
+    "category": "csv_filter",
+    "question": "List the missions operated by the agency ESA.",
+    "expected_route": "csv_data",
+    "ground_truth": "The mission operated by ESA is Juice with a cost of 1600 million USD.",
+    "expected_source": "space_missions.csv",
+    "csv_expectations": {
+      "operation": "filter",
+      "target_column": null,
+      "group_column": null,
+      "agg_func": null,
+      "filter": {
+        "column": "agency",
+        "operator": "==",
+        "value": "ESA"
+      },
+      "expected_value": 1,
+      "expected_entity": "Juice"
+    },
+    "conversation_history": null,
+    "synthetic_context": null
+  },
+  {
+    "id": "csv_4",
+    "category": "csv_groupby",
+    "question": "What is the average cost of missions by agency?",
+    "expected_route": "csv_data",
+    "ground_truth": "The average cost for NASA missions is 3400.0 million USD across 2 missions.",
+    "expected_source": "space_missions.csv",
+    "csv_expectations": {
+      "operation": "groupby_agg",
+      "target_column": "cost",
+      "group_column": "agency",
+      "agg_func": "mean",
+      "filter": null,
+      "expected_value": 3400.0,
+      "expected_entity": "NASA"
+    },
+    "conversation_history": null,
+    "synthetic_context": null
+  },
+  {
+    "id": "multi_1",
+    "category": "multi_turn_coreference",
+    "question": "What was its reported cost?",
+    "expected_route": "csv_data",
+    "ground_truth": "The cost of Chandrayaan-3 was 75 million USD.",
+    "expected_source": "space_missions.csv",
+    "csv_expectations": {
+      "operation": "filter",
+      "target_column": "cost",
+      "group_column": null,
+      "agg_func": null,
+      "filter": {
+        "column": "mission",
+        "operator": "==",
+        "value": "Chandrayaan-3"
+      },
+      "expected_value": 75.0,
+      "expected_entity": "Chandrayaan-3"
+    },
+    "conversation_history": [
+      {
+        "role": "user",
+        "content": "Can you check the details for Chandrayaan-3?"
+      },
+      {
+        "role": "assistant",
+        "content": "Chandrayaan-3 was a lunar mission operated by ISRO launched in 2023."
+      }
+    ],
+    "synthetic_context": null
+  }
+]

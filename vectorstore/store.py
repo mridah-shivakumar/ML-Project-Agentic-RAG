@@ -13,7 +13,7 @@ import json
 import os
 import pickle
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple, Union
 
 import faiss
 import numpy as np
@@ -78,24 +78,29 @@ def _load_index():
 
 # ── Hybrid search ────────────────────────────────────────────────────────────
 
-def hybrid_search(query: str, top_k: int = TOP_K_FINAL) -> List[Dict[str, Any]]:
+def hybrid_search(
+    query: str,
+    top_k: int = TOP_K_FINAL,
+    return_stats: bool = False,
+) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], Dict[str, int]]]:
     """
     1. Dense FAISS search     → ranked list A
     2. Sparse BM25 search     → ranked list B
     3. Reciprocal Rank Fusion → merged list
     4. Cross-encoder rerank   → final top_k
     Returns list of {"text": ..., "source": ..., "page": ..., "score": ...}
+    If return_stats=True, returns (results, stats_dict).
     """
     index, chunks, metadatas, bm25 = _load_index()
 
     # ── Dense retrieval ──────────────────────────────────────
     q_vec   = np.array([embed_query(query)], dtype="float32")
     _, idxs = index.search(q_vec, TOP_K_FETCH)
-    dense_ids = idxs[0].tolist()
+    dense_ids = [int(i) for i in idxs[0].tolist() if 0 <= i < len(chunks)]
 
     # ── Sparse BM25 retrieval ────────────────────────────────
     bm25_scores = bm25.get_scores(query.lower().split())
-    sparse_ids  = np.argsort(bm25_scores)[::-1][:TOP_K_FETCH].tolist()
+    sparse_ids  = [int(i) for i in np.argsort(bm25_scores)[::-1][:TOP_K_FETCH].tolist() if 0 <= i < len(chunks)]
 
     # ── RRF fusion ───────────────────────────────────────────
     rrf: Dict[int, float] = {}
@@ -124,4 +129,14 @@ def hybrid_search(query: str, top_k: int = TOP_K_FINAL) -> List[Dict[str, Any]]:
         })
 
     logger.debug(f"Hybrid search returned {len(results)} chunks for: '{query[:60]}'")
+
+    stats = {
+        "faiss_candidates": len(dense_ids),
+        "bm25_candidates": len(sparse_ids),
+        "fused_candidates": len(fused_ids),
+        "reranked_count": len(results),
+    }
+
+    if return_stats:
+        return results, stats
     return results

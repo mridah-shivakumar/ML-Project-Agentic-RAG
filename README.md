@@ -16,7 +16,8 @@
 - [Overview](#-overview)
 - [Architecture](#-architecture)
 - [Tech Stack](#-tech-stack)
-- [RAGAs Evaluation Results](#-ragas-evaluation-results)
+- [Agent Execution Tracing & Explainability](#-agent-execution-tracing--explainability)
+- [Evaluation & Reliability Framework](#-evaluation--reliability-framework)
 - [Project Structure](#-project-structure)
 - [Getting Started](#-getting-started)
 - [API Reference](#-api-reference)
@@ -101,18 +102,52 @@ retrieve    generate (LLM-only path)
 
 ---
 
-## 📊 RAGAs Evaluation Results
+## 🔍 Agent Execution Tracing & Explainability
 
-Evaluated on a 5-question test set using RAGAs metrics:
+To deliver transparent explainability for college evaluations and production auditing without exposing private reasoning, the system captures **observable execution telemetry** for every query:
 
-| Metric | Score | Description |
-|--------|-------|-------------|
-| **Faithfulness** | 0.91 | Answer grounded in retrieved context |
-| **Answer Relevancy** | 0.88 | Answer addresses the question asked |
-| **Context Precision** | 0.85 | Retrieved chunks are useful |
-| **Context Recall** | 0.83 | All necessary facts were retrieved |
+### What the Trace Represents
+* **Active Route**: Indicates whether the query was classified and dispatched to Document RAG (`documents`), Tabular Analysis (`csv_data`), or Direct LLM Knowledge (`llm_only`).
+* **Node Telemetry**: Sequentially records nodes that actually executed (e.g. `route_query` → `analyze_tabular` → `generate`), preserving strict traversal order, execution status (`success`/`error`), and elapsed milliseconds.
+* **Retrieval Telemetry**: For document queries, captures candidate counts across dense FAISS (20), sparse BM25 (20), reciprocal rank fusion (20), cross-encoder reranked chunks (5), grading outcome, and whether query rewriting or Tavily web fallback occurred.
+* **Structured Data Telemetry**: For CSV queries, captures dataset filename, row count, planned operation (`highest`, `lowest`, `aggregate`, `filter`, `groupby_agg`), target column, and affected row count.
 
-> Run `python -m evaluation.evaluate` to regenerate scores. CI pipeline fails automatically if faithfulness drops below 0.70.
+### Difference Between Trace and Chain-of-Thought
+* **Observable System Metadata**: The trace records *how the system operated* (which tools/nodes fired, execution duration, candidate counts, and status), NOT internal LLM chain-of-thought, hidden prompts, or private model reasoning.
+* **Zero Credential Exposure**: Telemetry strictly omits API keys, environment variables, credentials, or internal filesystem paths.
+
+---
+
+## 📊 Evaluation & Reliability Framework
+
+The project includes an empirical, multi-modal evaluation pipeline measuring retrieval performance, generation faithfulness, and tabular computation precision.
+
+### Evaluation Methodology
+The benchmark suite evaluates queries from `evaluation/eval_dataset.json` (covering direct document lookup, reasoning, multi-context retrieval, query rewriting, web search fallback, CSV highest/lowest/aggregate/filter/groupby queries, and multi-turn coreference).
+
+### Metrics
+1. **Document RAG (RAGAs)**:
+   * **Faithfulness**: Grounding of generated answer against retrieved document chunks.
+   * **Answer Relevancy**: Completeness and relevance of answer to the user question.
+   * **Context Precision & Recall**: Utility and factual coverage of retrieved context.
+2. **Retrieval Reliability**:
+   * **Source Hit Rate**: Percentage of queries where the expected ground-truth document was retrieved.
+   * **Retrieval Success Rate**: Percentage of queries retrieving valid, relevant chunks.
+3. **Structured Data Correctness (Deterministic)**:
+   * Evaluated without LLM judges.
+   * Directly verifies: operation selection match, target column match, and exact computed Pandas value preservation.
+4. **Aggregate Reliability Score**:
+   $$\text{Aggregate Reliability} = \frac{1}{N} \sum_{i=1}^N M_i$$
+   Strictly calculated as the arithmetic mean of all non-null, validly computed metrics. Unavailable metrics are omitted rather than treated as zero.
+
+### Running Evaluation & Artifacts
+* **Run Evaluation**:
+  ```bash
+  python -m evaluation.evaluate
+  ```
+* **Results Storage**:
+  * `evaluation/results.json`: Full machine-readable breakdown including per-question traces and domain aggregates.
+  * `evaluation/latest_scores.json`: Flat backward-compatible summary used by CI and `/metrics`.
 
 ---
 
@@ -225,25 +260,44 @@ Response:
 ```
 
 ### `POST /query`
-Ask a question. Returns answer + cited sources + performance metadata.
+Ask a question. Returns answer + cited sources + execution trace telemetry.
 ```bash
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
-  -d '{"question": "What are the main findings?"}'
+  -d '{"question": "Which mission had the highest budget?"}'
 ```
 Response:
 ```json
 {
-  "answer": "The main findings are... [Source: report.pdf, Page 4]",
-  "sources": [{"text": "...", "source": "report.pdf", "page": 4}],
+  "answer": "Artemis 1 had the highest budget at 4100 million USD. [Data: space_missions.csv]",
+  "sources": [{"text": "Highest cost is Artemis 1 ($4100M)", "source": "space_missions.csv", "page": 0}],
   "rewrite_count": 0,
   "used_web": false,
-  "latency_ms": 1243
+  "latency_ms": 142,
+  "trace": {
+    "route": "csv_data",
+    "nodes": [
+      {"name": "route_query", "status": "success", "duration_ms": 12},
+      {"name": "analyze_tabular", "status": "success", "duration_ms": 25},
+      {"name": "generate", "status": "success", "duration_ms": 85}
+    ],
+    "tabular": {
+      "source": "space_missions.csv",
+      "operation": "highest",
+      "target_column": "cost",
+      "rows_analyzed": 5,
+      "result_count": 1
+    },
+    "total_duration_ms": 122
+  }
 }
 ```
 
 ### `GET /metrics`
-Returns latest RAGAs evaluation scores.
+Returns aggregate evaluation summary scores.
+
+### `GET /evaluation/results`
+Returns comprehensive evaluation results JSON with per-case telemetry.
 
 ---
 
