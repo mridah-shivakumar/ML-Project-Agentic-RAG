@@ -27,7 +27,23 @@ from pydantic import BaseModel
 
 from app.agent import ask
 from ingestion.ingest import load_pdfs
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from vectorstore.store import build_index
+
+
+def parse_history(history: Optional[List[dict]]) -> List[BaseMessage]:
+    """Convert API history payload into LangChain BaseMessage objects."""
+    if not history:
+        return []
+    messages: List[BaseMessage] = []
+    for item in history:
+        role = item.get("role", "").lower()
+        content = item.get("content", "")
+        if role in ("user", "human"):
+            messages.append(HumanMessage(content=content))
+        elif role in ("assistant", "ai"):
+            messages.append(AIMessage(content=content))
+    return messages
 
 
 # ── App setup ────────────────────────────────────────────────────────────────
@@ -123,7 +139,8 @@ def query(req: QueryRequest):
     """
     t0 = time.time()
     try:
-        result = ask(req.question)
+        history_messages = parse_history(req.history)
+        result = ask(req.question, history=history_messages)
     except FileNotFoundError:
         raise HTTPException(
             status_code=404,

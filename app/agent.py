@@ -76,25 +76,68 @@ def _last_human_query(state: AgentState) -> str:
     return state.get("query") or ""  # type: ignore[union-attr]
 
 
+def _format_history(messages: List[BaseMessage], max_turns: int = 4) -> str:
+    """Format recent prior conversation turns (excluding the final current query)."""
+    prior = messages[:-1]
+    if not prior:
+        return ""
+    return "\n".join(
+        f"{'User' if isinstance(m, HumanMessage) else 'Assistant'}: {m.content}"
+        for m in prior[-max_turns:]
+    )
+
+
 # ── Nodes ────────────────────────────────────────────────────────────────────
 
 def route_query(state: AgentState) -> AgentState:
     """
     Ask LLM whether the question needs document retrieval.
-    Returns updated state; routing decision is in 'query' metadata.
+    Contextualizes follow-up questions if conversation history exists.
+    Returns updated state; routing decision is in '_route' and search query in 'query'.
     """
     query = _last_human_query(state)
-    prompt = (
-        "You are a routing assistant. Given the user question below, decide:\n"
-        "- Reply 'documents' if the answer likely requires looking up specific documents.\n"
-        "- Reply 'llm_only' if it's general knowledge you can answer without documents.\n\n"
-        f"Question: {query}\n\nReply with exactly one word: documents OR llm_only"
-    )
+    history_text = _format_history(state.get("messages", []))
+
+    if history_text:
+        prompt = (
+            "You are a routing assistant. Given the conversation history and the latest user question below, decide:\n"
+            "- Reply 'documents' if the answer likely requires looking up specific documents.\n"
+            "- Reply 'llm_only' if it's general knowledge you can answer without documents.\n\n"
+            f"Conversation History:\n{history_text}\n\n"
+            f"Latest Question: {query}\n\n"
+            "Reply with exactly one word: documents OR llm_only"
+        )
+    else:
+        prompt = (
+            "You are a routing assistant. Given the user question below, decide:\n"
+            "- Reply 'documents' if the answer likely requires looking up specific documents.\n"
+            "- Reply 'llm_only' if it's general knowledge you can answer without documents.\n\n"
+            f"Question: {query}\n\nReply with exactly one word: documents OR llm_only"
+        )
+
     response = llm.invoke([HumanMessage(content=prompt)])
     decision = response.content.strip().lower()
     if "documents" not in decision:
         decision = "llm_only"
     logger.info(f"[route_query] decision='{decision}' for query='{query[:60]}'")
+
+    # Contextualize follow-up query if history is present and routing to documents
+    if decision == "documents" and history_text:
+        rephrase_prompt = (
+            "Given the conversation history and the user's latest follow-up question, "
+            "rephrase the question into a standalone, specific search query that incorporates necessary context "
+            "(resolving pronouns like 'it', 'they', 'this', 'that'). "
+            "If the question is already fully standalone, return it unchanged. "
+            "Return ONLY the standalone search query without preamble or quotes.\n\n"
+            f"Conversation History:\n{history_text}\n\n"
+            f"Latest Question: {query}"
+        )
+        rephrase_resp = llm.invoke([HumanMessage(content=rephrase_prompt)])
+        standalone = str(rephrase_resp.content).strip()
+        if standalone:
+            logger.info(f"[route_query] contextualized query from '{query}' to '{standalone}'")
+            query = standalone
+
     return {**state, "query": query, "_route": decision}
 
 
@@ -134,13 +177,25 @@ def grade_documents(state: AgentState) -> AgentState:
 
 
 def rewrite_query(state: AgentState) -> AgentState:
-    """Corrective RAG: rewrite the query to improve retrieval."""
+    """Corrective RAG: rewrite the query to improve retrieval, using conversation context if available."""
     query = state["query"]
-    prompt = (
-        f"The following question didn't retrieve useful documents:\n{query}\n\n"
-        "Rewrite it to be more specific and likely to match technical documentation. "
-        "Return only the rewritten question, nothing else."
-    )
+    history_text = _format_history(state.get("messages", []))
+
+    if history_text:
+        prompt = (
+            f"The following question failed to retrieve useful documents from our knowledge base:\n{query}\n\n"
+            f"Conversation History:\n{history_text}\n\n"
+            "Using the conversation context to clarify any ambiguous references, rewrite the question "
+            "to be more specific and likely to match technical documentation. "
+            "Return only the rewritten question, nothing else."
+        )
+    else:
+        prompt = (
+            f"The following question didn't retrieve useful documents:\n{query}\n\n"
+            "Rewrite it to be more specific and likely to match technical documentation. "
+            "Return only the rewritten question, nothing else."
+        )
+
     response      = llm.invoke([HumanMessage(content=prompt)])
     new_query     = str(response.content).strip()
     rewrite_count = int(state.get("rewrite_count") or 0) + 1  # type: ignore[union-attr]
@@ -260,12 +315,30 @@ rag_agent = build_graph()
 
 # ── Public interface ──────────────────────────────────────────────────────────
 
-def ask(query: str, history: Optional[List[BaseMessage]] = None) -> Dict[str, Any]:
+def _to_messages(history: Optional[List[Any]]) -> List[BaseMessage]:
+    """Ensure history items are LangChain BaseMessage objects."""
+    if not history:
+        return []
+    converted: List[BaseMessage] = []
+    for item in history:
+        if isinstance(item, BaseMessage):
+            converted.append(item)
+        elif isinstance(item, dict):
+            role = item.get("role", "").lower()
+            content = str(item.get("content", ""))
+            if role in ("user", "human"):
+                converted.append(HumanMessage(content=content))
+            elif role in ("assistant", "ai"):
+                converted.append(AIMessage(content=content))
+    return converted
+
+
+def ask(query: str, history: Optional[List[Any]] = None) -> Dict[str, Any]:
     """
     Main entry point. Call from FastAPI or Streamlit.
-    Returns {"answer": str, "sources": list, "rewrite_count": int}
+    Returns {"answer": str, "sources": list, "rewrite_count": int, "used_web": bool}
     """
-    messages = (history or []) + [HumanMessage(content=query)]
+    messages = _to_messages(history) + [HumanMessage(content=query)]
     initial_state: AgentState = {
         "messages":      messages,
         "query":         query,
